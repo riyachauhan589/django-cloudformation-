@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Django Production - Master Stack
+  Deploys nested stacks in order: network -> security -> compute -> database.
+  Upload the templates/ folder to S3 before deploying this stack.
+
+# ------------------------------------------------------------------------------------
+# PARAMETERS
+# ------------------------------------------------------------------------------------
+Parameters:
+
+  EnvironmentName:
+    Type: String
+    Default: dev
+
+  TemplatesBucketName:
+    Type: String
+    Description: S3 bucket that hosts network.yml, security.yml, compute.yml, database.yml
+
+  TemplatesS3KeyPrefix:
+    Type: String
+    Default: django-production-cloudformation/templates
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+
+  KeyPairName:
+    Type: String
+    Default: ""
+
+  MinSize:
+    Type: Number
+    Default: 2
+
+  MaxSize:
+    Type: Number
+    Default: 4
+
+  DesiredCapacity:
+    Type: Number
+    Default: 2
+
+  AppPort:
+    Type: Number
+    Default: 8000
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+
+  DBName:
+    Type: String
+    Default: django_app
+
+  DBMasterUsername:
+    Type: String
+    Default: admin
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  MultiAZ:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 7
+
+# ------------------------------------------------------------------------------------
+# RESOURCES - NESTED STACKS
+# ------------------------------------------------------------------------------------
+Resources:
+
+  # 1. NETWORK STACK
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplatesBucketName}/${TemplatesS3KeyPrefix}/network.yml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+
+  # 2. SECURITY STACK
+  SecurityStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplatesBucketName}/${TemplatesS3KeyPrefix}/security.yml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VPCId: !GetAtt NetworkStack.Outputs.VPCId
+        AppPort: !Ref AppPort
+
+  # 3. COMPUTE STACK
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplatesBucketName}/${TemplatesS3KeyPrefix}/compute.yml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VPCId: !GetAtt NetworkStack.Outputs.VPCId
+        PublicSubnets: !GetAtt NetworkStack.Outputs.PublicSubnets
+        PrivateAppSubnets: !GetAtt NetworkStack.Outputs.PrivateAppSubnets
+        ALBSecurityGroupId: !GetAtt SecurityStack.Outputs.ALBSecurityGroupId
+        EC2SecurityGroupId: !GetAtt SecurityStack.Outputs.EC2SecurityGroupId
+        InstanceProfileName: !GetAtt SecurityStack.Outputs.InstanceProfileName
+        AppPort: !Ref AppPort
+        InstanceType: !Ref InstanceType
+        KeyPairName: !Ref KeyPairName
+        MinSize: !Ref MinSize
+        MaxSize: !Ref MaxSize
+        DesiredCapacity: !Ref DesiredCapacity
+
+  # 4. DATABASE STACK
+  DatabaseStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplatesBucketName}/${TemplatesS3KeyPrefix}/database.yml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        PrivateDBSubnets: !GetAtt NetworkStack.Outputs.PrivateDBSubnets
+        RDSSecurityGroupId: !GetAtt SecurityStack.Outputs.RDSSecurityGroupId
+        DBName: !Ref DBName
+        DBMasterUsername: !Ref DBMasterUsername
+        DBMasterPassword: !Ref DBMasterPassword
+        DBInstanceClass: !Ref DBInstanceClass
+        MultiAZ: !Ref MultiAZ
+        BackupRetentionPeriod: !Ref BackupRetentionPeriod
+
+# ------------------------------------------------------------------------------------
+# OUTPUTS
+# ------------------------------------------------------------------------------------
+Outputs:
+
+  VPCId:
+    Value: !GetAtt NetworkStack.Outputs.VPCId
+
+  ALBDNSName:
+    Value: !GetAtt ComputeStack.Outputs.ALBDNSName
+
+  DBEndpointAddress:
+    Value: !GetAtt DatabaseStack.Outputs.DBEndpoint

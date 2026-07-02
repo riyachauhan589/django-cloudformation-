@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Django Production - Compute Stack (Launch Template, ASG, Target Group, ALB, Listener)
+
+# ------------------------------------------------------------------------------------
+# PARAMETERS
+# ------------------------------------------------------------------------------------
+Parameters:
+
+  EnvironmentName:
+    Type: String
+    Default: dev
+
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  PrivateAppSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  ALBSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  EC2SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  InstanceProfileName:
+    Type: String
+
+  AppPort:
+    Type: Number
+    Default: 8000
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+  KeyPairName:
+    Type: String
+    Default: ""
+
+  MinSize:
+    Type: Number
+    Default: 2
+
+  MaxSize:
+    Type: Number
+    Default: 4
+
+# ------------------------------------------------------------------------------------
+# CONDITIONS
+# ------------------------------------------------------------------------------------
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+
+# ------------------------------------------------------------------------------------
+# RESOURCES
+# ------------------------------------------------------------------------------------
+Resources:
+
+  # ---------------------------- Launch Template ----------------------------
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${EnvironmentName}-lt-${AWS::StackName}"
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+
+        KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref "AWS::NoValue"]
+
+        IamInstanceProfile:
+          Name: !Ref InstanceProfileName
+
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroupId
+
+        UserData:
+          Fn::Base64: !Sub |
+
+            dnf update -y
+            dnf install -y python3 python3-pip git nginx
+
+            pip3 install --upgrade pip
+            pip3 install gunicorn
+
+            git clone https://github.com/your-org/your-django-app.git /opt/django-app
+            cd /opt/django-app
+
+            pip3 install -r requirements.txt
+
+            cat > /etc/systemd/system/gunicorn.service << 'EOF'
+            [Unit]
+            Description=Gunicorn Django Service
+            After=network.target
+
+            [Service]
+            WorkingDirectory=/opt/django-app
+            ExecStart=/usr/bin/gunicorn --workers 3 --bind 0.0.0.0:${AppPort} myproject.wsgi:application
+            Restart=always
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            systemctl daemon-reload
+            systemctl enable gunicorn
+            systemctl start gunicorn
+
+            systemctl enable nginx
+            systemctl start nginx
+
+  # ---------------------------- Target Group ----------------------------
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${EnvironmentName}-tg"
+      VpcId: !Ref VPCId
+      Protocol: HTTP
+      Port: !Ref AppPort
+      TargetType: instance
+
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  # ---------------------------- Auto Scaling Group ----------------------------
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: TargetGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${EnvironmentName}-asg"
+      VPCZoneIdentifier: !Ref PrivateAppSubnets
+
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref MinSize
+
+      TargetGroupARNs:
+        - !Ref TargetGroup
+
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 120
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-app-instance"
+          PropagateAtLaunch: true
+
+  # ---------------------------- Application Load Balancer ----------------------------
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${EnvironmentName}-alb"
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ALBSecurityGroupId
+      Subnets: !Ref PublicSubnets
+
+  # ---------------------------- Listener ----------------------------
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+# ------------------------------------------------------------------------------------
+# OUTPUTS
+# ------------------------------------------------------------------------------------
+Outputs:
+
+  ALBDNSName:
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${EnvironmentName}-ALBDNSName"
+
+  AutoScalingGroupName:
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub "${EnvironmentName}-AutoScalingGroupName"
+
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+    Export:
+      Name: !Sub "${EnvironmentName}-TargetGroupArn"

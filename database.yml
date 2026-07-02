@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Django Production - Database Stack (MySQL RDS, DB Subnet Group, Parameter Group, Backup)
+
+# ------------------------------------------------------------------------------------
+# PARAMETERS
+# ------------------------------------------------------------------------------------
+Parameters:
+
+  EnvironmentName:
+    Type: String
+    Default: dev
+
+  PrivateDBSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  RDSSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  DBName:
+    Type: String
+    Default: django_app
+
+  DBMasterUsername:
+    Type: String
+    Default: admin
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+
+  MaxAllocatedStorage:
+    Type: Number
+    Default: 100
+
+  MultiAZ:
+    Type: String
+    AllowedValues: [true, false]
+    Default: false
+
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 7
+
+# ------------------------------------------------------------------------------------
+# RESOURCES
+# ------------------------------------------------------------------------------------
+Resources:
+
+  # ---------------------------- DB Subnet Group ----------------------------
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Django RDS database
+      SubnetIds: !Ref PrivateDBSubnets
+      DBSubnetGroupName: !Sub "${EnvironmentName}-db-subnet-group"
+
+  # ---------------------------- DB Parameter Group ----------------------------
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Parameter group for MySQL Django DB
+      Family: mysql8.0
+      Parameters:
+        character_set_server: utf8mb4
+        collation_server: utf8mb4_unicode_ci
+
+  # ---------------------------- RDS MySQL Database ----------------------------
+  MySQLDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "${EnvironmentName}-mysql-db"
+      Engine: mysql
+      EngineVersion: 8.0
+
+      DBInstanceClass: !Ref DBInstanceClass
+
+      AllocatedStorage: !Ref DBAllocatedStorage
+      MaxAllocatedStorage: !Ref MaxAllocatedStorage
+
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroupId
+
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DBParameterGroupName: !Ref DBParameterGroup
+
+      MultiAZ: !Ref MultiAZ
+
+      PubliclyAccessible: false
+
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: "03:00-04:00"
+
+      StorageEncrypted: true
+
+      AutoMinorVersionUpgrade: true
+      DeletionProtection: false
+
+# ------------------------------------------------------------------------------------
+# OUTPUTS
+# ------------------------------------------------------------------------------------
+Outputs:
+
+  DBEndpoint:
+    Value: !GetAtt MySQLDatabase.Endpoint.Address
+    Export:
+      Name: !Sub "${EnvironmentName}-DBEndpoint"
+
+  DBPort:
+    Value: !GetAtt MySQLDatabase.Endpoint.Port
+    Export:
+      Name: !Sub "${EnvironmentName}-DBPort"
+
+  DBNameOutput:
+    Value: !Ref DBName
+    Export:
+      Name: !Sub "${EnvironmentName}-DBName"

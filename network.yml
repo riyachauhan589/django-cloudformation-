@@ -1,0 +1,360 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Django Production - Network Stack
+
+# -----------------------------------------------------------------------------
+# PARAMETERS
+# -----------------------------------------------------------------------------
+
+Parameters:
+
+  EnvironmentName:
+    Type: String
+    Default: dev
+
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnetACIDR:
+    Type: String
+    Default: 10.0.1.0/24
+
+  PublicSubnetBCIDR:
+    Type: String
+    Default: 10.0.2.0/24
+
+  PrivateAppSubnetACIDR:
+    Type: String
+    Default: 10.0.11.0/24
+
+  PrivateAppSubnetBCIDR:
+    Type: String
+    Default: 10.0.12.0/24
+
+  PrivateDBSubnetACIDR:
+    Type: String
+    Default: 10.0.21.0/24
+
+  PrivateDBSubnetBCIDR:
+    Type: String
+    Default: 10.0.22.0/24
+
+# -----------------------------------------------------------------------------
+# RESOURCES
+# -----------------------------------------------------------------------------
+
+Resources:
+
+# -----------------------------------------------------------------------------
+# VPC
+# -----------------------------------------------------------------------------
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-VPC"
+
+# -----------------------------------------------------------------------------
+# Internet Gateway
+# -----------------------------------------------------------------------------
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-IGW"
+
+# -----------------------------------------------------------------------------
+# Attach Internet Gateway
+# -----------------------------------------------------------------------------
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+# -----------------------------------------------------------------------------
+# Public Subnet A
+# -----------------------------------------------------------------------------
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetACIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-PublicSubnet-A"
+
+# -----------------------------------------------------------------------------
+# Public Subnet B
+# -----------------------------------------------------------------------------
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetBCIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-PublicSubnet-B"
+
+# -----------------------------------------------------------------------------
+# Private App Subnet A
+# -----------------------------------------------------------------------------
+
+  PrivateAppSubnetA:
+    Type: AWS::EC2::Subnet
+
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateAppSubnetACIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-PrivateAppSubnet-A"
+
+# -----------------------------------------------------------------------------
+# Private App Subnet B
+# -----------------------------------------------------------------------------
+
+  PrivateAppSubnetB:
+    Type: AWS::EC2::Subnet
+
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateAppSubnetBCIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-PrivateAppSubnet-B"
+
+# -----------------------------------------------------------------------------
+# Private DB Subnet A
+# -----------------------------------------------------------------------------
+
+  PrivateDBSubnetA:
+    Type: AWS::EC2::Subnet
+
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateDBSubnetACIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+      Tags:
+        - Key: Name
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-Public-RouteTable"
+
+# -----------------------------------------------------------------------------
+# Public Internet Route
+# -----------------------------------------------------------------------------
+
+  PublicInternetRoute:
+    Type: AWS::EC2::Route
+
+    DependsOn: VPCGatewayAttachment
+
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+# -----------------------------------------------------------------------------
+# Associate Public Subnet A
+# -----------------------------------------------------------------------------
+
+  PublicSubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetA
+
+# -----------------------------------------------------------------------------
+# Associate Public Subnet B
+# -----------------------------------------------------------------------------
+
+  PublicSubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetB
+# -----------------------------------------------------------------------------
+# Private Route Table A
+# -----------------------------------------------------------------------------
+
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+
+    Properties:
+      VpcId: !Ref VPC
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-PrivateRouteTable-A"
+
+# -----------------------------------------------------------------------------
+# Private Route A
+# -----------------------------------------------------------------------------
+
+  PrivateRouteA:
+    Type: AWS::EC2::Route
+    DependsOn: NatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+# -----------------------------------------------------------------------------
+# Associate Private App Subnet A
+# -----------------------------------------------------------------------------
+
+  PrivateAppSubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      SubnetId: !Ref PrivateAppSubnetA
+
+# -----------------------------------------------------------------------------
+# Associate Private DB Subnet A
+# -----------------------------------------------------------------------------
+
+  PrivateDBSubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      SubnetId: !Ref PrivateDBSubnetA
+
+# -----------------------------------------------------------------------------
+# Private Route Table B
+# -----------------------------------------------------------------------------
+
+  PrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+
+    Properties:
+      VpcId: !Ref VPC
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-PrivateRouteTable-B"
+
+# -----------------------------------------------------------------------------
+# Private Route B
+# -----------------------------------------------------------------------------
+
+  PrivateRouteB:
+    Type: AWS::EC2::Route
+    DependsOn: NatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+# -----------------------------------------------------------------------------
+# Associate Private App Subnet B
+# -----------------------------------------------------------------------------
+
+  PrivateAppSubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      SubnetId: !Ref PrivateAppSubnetB
+
+# -----------------------------------------------------------------------------
+# Associate Private DB Subnet B
+# -----------------------------------------------------------------------------
+
+  PrivateDBSubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      SubnetId: !Ref PrivateDBSubnetB
+
+# -----------------------------------------------------------------------------
+# OUTPUTS
+# -----------------------------------------------------------------------------
+
+Outputs:
+
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${EnvironmentName}-VPCId"
+
+  PublicSubnetAId:
+    Description: Public Subnet A ID
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: !Sub "${EnvironmentName}-PublicSubnetA"
+
+  PublicSubnetBId:
+    Description: Public Subnet B ID
+    Value: !Ref PublicSubnetB
+    Export:
+      Name: !Sub "${EnvironmentName}-PublicSubnetB"
+
+  PrivateAppSubnetAId:
+    Description: Private App Subnet A ID
+    Value: !Ref PrivateAppSubnetA
+    Export:
+      Name: !Sub "${EnvironmentName}-PrivateAppSubnetA"
+
+  PrivateAppSubnetBId:
+    Description: Private App Subnet B ID
+    Value: !Ref PrivateAppSubnetB
+    Export:
+      Name: !Sub "${EnvironmentName}-PrivateAppSubnetB"
+
+  PrivateDBSubnetAId:
+    Description: Private DB Subnet A ID
+    Value: !Ref PrivateDBSubnetA
+    Export:
+      Name: !Sub "${EnvironmentName}-PrivateDBSubnetA"
+
+  PrivateDBSubnetBId:
+    Description: Private DB Subnet B ID
+    Value: !Ref PrivateDBSubnetB
+    Export:
+      Name: !Sub "${EnvironmentName}-PrivateDBSubnetB"
+
+  InternetGatewayId:
+    Description: Internet Gateway ID
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub "${EnvironmentName}-InternetGateway"
+
+  NatGatewayId:
+    Description: NAT Gateway ID
+    Value: !Ref NatGateway
+    Export:
+      Name: !Sub "${EnvironmentName}-NatGateway"
